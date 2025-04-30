@@ -1,2 +1,2 @@
 # ftype
-Instead `ftype` of Windows
+Instead of `assoc` and `ftype`  from Windows
