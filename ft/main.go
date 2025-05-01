@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -27,7 +26,6 @@ const (
 	fa              = `FileAssociations`
 	fe              = "FileExts"
 	access   uint32 = registry.READ
-	try             = 10000
 )
 
 var (
@@ -43,6 +41,7 @@ func main() {
 	//a="b" "c"
 	if assoc != "" {
 		if assoc == "/?" || strings.Contains(assoc, "=") {
+			// Помощь и изменения progId пусть делает `ftype`
 			e, err := os.Executable()
 			// path/type.exe
 			if err != nil {
@@ -63,7 +62,7 @@ func main() {
 			}
 			opts := []string{"/c", ft, assoc}
 			cmd := exec.Command("cmd", opts...)
-			cmd.SysProcAttr = &syscall.SysProcAttr{
+			cmd.SysProcAttr = &windows.SysProcAttr{
 				CmdLine: strings.Join(opts, " "),
 			}
 			fmt.Println(cmd)
@@ -76,49 +75,57 @@ func main() {
 			os.Stdin.Read(b)
 			return
 		}
-		progId, command := assoc2progId(assoc)
+		// assoc как расширение файла или как протокол в URL для `assoc`.
+		// Или ProgId как для `ftype`.
+		progId, command := assoc2progIdCommand(assoc)
 		if command == "" {
-			progId, _ = GetStringValue(registry.CLASSES_ROOT,
-				assoc, "")
-			if progId != "" {
-				_, command = assoc2progId(progId)
-			}
-			if command == "" {
-				fmt.Printf("Тип файлов '%s' не найден, или ему не сопоставлена команда открытия.\r\n", assoc)
-				return
-			}
+			fmt.Printf("Тип файлов '%s' не найден, или ему не сопоставлена команда открытия.\r\n", assoc)
+			return
 		}
-		if progId != "" {
-			progId = "=" + progId
-		}
-		fmt.Println(assoc + progId + "=" + command)
+		apc(assoc, progId, command)
 		return
 	}
 
-	fileURLs, _ := registry.CLASSES_ROOT.ReadSubKeyNames(try)
-	// fmt.Println(len(fileURLs))
-	for _, fileURL := range fileURLs {
-		progId, command := "", ""
-		def, _ := GetStringValue(registry.CLASSES_ROOT,
-			fileURL, "")
-		if strings.HasPrefix(def, "URL:") {
-			progId, command = assoc2progId(fileURL)
-		} else if strings.HasPrefix(fileURL, ".") {
-			progId, command = assoc2progId(fileURL)
-			if command == "" {
-				_, command = assoc2progId(def)
-				progId = def
-			}
+	assocs, _ := registry.CLASSES_ROOT.ReadSubKeyNames(0)
+	for _, assoc := range assocs {
+		if assoc2xa(assoc, " ") == "" {
+			continue
 		}
-		if command != "" {
-			if progId != "" {
-				progId = "=" + progId
-			}
-			fmt.Println(fileURL + progId + "=" + command)
-		}
+		// Дальше только файлы для Start как для `assoc`
+		progId, command := assoc2progIdCommand(assoc)
+		apc(assoc, progId, command)
 	}
 }
 
+// Из CLASSES_ROOT.
+// Как в cmd /c assoc.
+func assoc2command(assoc string) (progId, command string) {
+	progId, _ = GetStringValue(registry.CLASSES_ROOT, assoc, "")
+	if progId == "" {
+		return
+	}
+
+	if k, err := registry.OpenKey(registry.CLASSES_ROOT, progId, access); err == nil {
+		k.Close()
+		command, _ = progId2command(progId)
+	}
+	return
+}
+
+func apc(assoc, progId, command string) {
+	if progId == assoc {
+		progId = ""
+	}
+	if progId != "" {
+		progId = "=" + progId
+	}
+	if command != "" {
+		command = "=" + command
+	}
+	fmt.Println(assoc + progId + command)
+}
+
+// Если файл существует
 func isFileExist(path string) bool {
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return false
@@ -126,20 +133,21 @@ func isFileExist(path string) bool {
 	return true
 }
 
+// Сохраняем двойные кавычки для `ftype`
 func GetCommandLine() string {
-	return windows.UTF16PtrToString(syscall.GetCommandLine())
+	return windows.UTF16PtrToString(windows.GetCommandLine())
 }
 
+// К GetStringValue добавлено чтение из WOW64_32KEY
 func GetStringValue(r registry.Key, path, k string) (v string, err error) {
 	var key registry.Key
-	for _, a := range []uint32{access, access | registry.WOW64_32KEY} { // , access | registry.WOW64_64KEY
+	for _, a := range []uint32{access, access | registry.WOW64_32KEY} {
 		key, err = registry.OpenKey(r, path, a)
 		if err == nil {
 			defer key.Close()
 			break
 		}
 	}
-	// fmt.Println(r, key, path, k, v, err)
 	if err != nil {
 		return
 	}
@@ -147,9 +155,10 @@ func GetStringValue(r registry.Key, path, k string) (v string, err error) {
 	return
 }
 
+// К ReadValueNames добавлено чтение из WOW64_32KEY
 func ReadValueNames(r registry.Key, path string, n int) (names []string, err error) {
 	var key registry.Key
-	for _, a := range []uint32{access, access | registry.WOW64_32KEY} { //, access | registry.WOW64_64KEY
+	for _, a := range []uint32{access, access | registry.WOW64_32KEY} {
 		key, err = registry.OpenKey(r, path, a)
 		if err == nil {
 			defer key.Close()
@@ -162,6 +171,7 @@ func ReadValueNames(r registry.Key, path string, n int) (names []string, err err
 	return key.ReadValueNames(n)
 }
 
+// Из shell\open\command.
 func progId2command(progId string) (command string, err error) {
 	for _, root := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
 		command, err = GetStringValue(root,
@@ -173,6 +183,7 @@ func progId2command(progId string) (command string, err error) {
 	return
 }
 
+// Из RegisteredApplications.
 func assoc2progIds(assoc string) (progIds []string, err error) {
 	for _, root := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
 		var RegisteredApplications []string
@@ -183,6 +194,9 @@ func assoc2progIds(assoc string) (progIds []string, err error) {
 		}
 		Capabilities := ""
 		xa := assoc2xa(assoc, fa)
+		if xa == "" {
+			return
+		}
 		for _, RegisteredApplication := range RegisteredApplications {
 			// WinSCP
 			Capabilities, err = GetStringValue(root,
@@ -203,46 +217,55 @@ func assoc2progIds(assoc string) (progIds []string, err error) {
 	return
 }
 
-// Файл или URL
+// Файл, URL или нет.
 func assoc2xa(assoc, fa string) string {
 	if strings.HasPrefix(assoc, ".") {
 		return fa
+	} else if def, _ := GetStringValue(registry.CLASSES_ROOT, assoc, ""); strings.HasPrefix(def, "URL:") {
+		return ua
 	}
-	return ua
+	return ""
 }
 
-func assoc2progId(assoc string) (progId, command string) {
+// Из UserChoice.
+// Из RegisteredApplications.
+// Из CLASSES_ROOT.
+func assoc2progIdCommand(assoc string) (progId, command string) {
 	xs := []string{sa, row}
 	xa := assoc2xa(assoc, fe)
 	if strings.HasPrefix(assoc, ".") {
 		xs = []string{cve, row}
 	}
-
-	for _, x := range xs {
-		progId, _ = GetStringValue(registry.CURRENT_USER,
-			filepath.Join(x, xa, assoc, "UserChoice"),
-			"ProgId")
-		if progId != "" {
-			break
-		}
-	}
-	if progId != "" {
-		command, _ = progId2command(progId)
-		// fmt.Println(bin, err)
-	}
-	if command == "" {
-		progIds, _ := assoc2progIds(assoc)
-		// fmt.Println(progIds, err)
-		if len(progIds) < 1 {
-			progIds = []string{assoc}
-		}
-		for _, progId := range progIds {
-			command, _ = progId2command(progId)
-			// fmt.Println(bin, err)
-			if command != "" {
+	if xa != "" {
+		for _, x := range xs {
+			progId, _ = GetStringValue(registry.CURRENT_USER,
+				filepath.Join(x, xa, assoc, "UserChoice"),
+				"ProgId")
+			if progId != "" {
 				break
 			}
 		}
+		if progId != "" {
+			command, _ = progId2command(progId)
+			// fmt.Println(bin, err)
+		}
+		if command != "" {
+			return
+		}
 	}
+	progIds, _ := assoc2progIds(assoc)
+	// fmt.Println(progIds, err)
+	if len(progIds) < 1 {
+		// Может assoc это progId
+		progIds = []string{assoc}
+	}
+	for _, p := range progIds {
+		progId = p
+		command, _ = progId2command(progId)
+		if command != "" {
+			return
+		}
+	}
+	progId, command = assoc2command(assoc)
 	return
 }
