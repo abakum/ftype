@@ -188,7 +188,6 @@ func Assoc2progIdCommand(assoc string) (progId, command string) {
 		}
 	}
 	progIds, _ := Assoc2progIds(assoc)
-	// fmt.Println(progIds, err)
 	if len(progIds) < 1 {
 		// Может assoc это progId
 		progIds = []string{assoc}
