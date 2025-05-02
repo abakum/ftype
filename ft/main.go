@@ -36,9 +36,41 @@ func main() {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Run()
+			if assoc == "/?" {
+				fmt.Println()
+				fmt.Println("'ft' можно использовать как 'assoc' и как 'ftype' с поиском как с 'find'.")
+				fmt.Println("В поиске используется только символ шаблона '*'.")
+				fmt.Println("Символ шаблона '?' используется как заменитель '='.")
+				fmt.Println(`Например ассоциация '.bat' представляется при поиске как '.bat?batfile?"%1" %*'.`)
+				fmt.Println("Например шаблон '*??' найдёт все ассоциации без типов.")
+				fmt.Println("Например шаблон '*?' найдёт все ассоциации без команд открытия.")
+				fmt.Println("Например шаблон '.*' найдёт все ассоциации файлов.")
+				fmt.Println("Если шаблон начинается с `!` то результат инвертируется.")
+				fmt.Println("Например шаблон '!.*' найдёт все ассоциации протоколов.")
+				fmt.Println(`Одиночный символ шаблона '*' является исключением работает и как 'ft|find "*"'.`)
+			}
 			fmt.Println("Press Enter")
 			b := []byte{0}
 			os.Stdin.Read(b)
+			return
+		}
+		if strings.Contains(assoc, ftype.GLOB) {
+			if assoc == ftype.GLOB {
+				ftype.EnumClassesRoot(apc, ftype.IsAssoc, func(subj string) bool {
+					return strings.Contains(subj, ftype.GLOB)
+				})
+				return
+			}
+			if strings.HasPrefix(assoc, "!") {
+				assoc = strings.TrimPrefix(assoc, "!")
+				ftype.EnumClassesRoot(apc, ftype.IsAssoc, func(subj string) bool {
+					return !ftype.Glob(assoc, subj, true)
+				})
+			} else {
+				ftype.EnumClassesRoot(apc, ftype.IsAssoc, func(subj string) bool {
+					return ftype.Glob(assoc, subj, true)
+				})
+			}
 			return
 		}
 		// assoc как расширение файла или как протокол в URL для `assoc`.
@@ -79,7 +111,7 @@ func main() {
 		return
 	}
 
-	ftype.EnumClassesRoot(apc, ftype.IsAssoc)
+	ftype.EnumClassesRoot(apc, ftype.IsAssoc, nil)
 }
 
 func apc(assoc, progId, command string) {

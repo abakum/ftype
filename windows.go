@@ -26,13 +26,15 @@ const (
 	access   uint32 = registry.READ
 )
 
-func EnumClassesRoot(do func(assoc, progId, command string), ok func(subKeyName string) bool) {
+func EnumClassesRoot(do func(assoc, progId, command string), in, out func(s string) bool) {
 	assocs, _ := registry.CLASSES_ROOT.ReadSubKeyNames(0)
 	for _, assoc := range assocs {
-		if ok == nil || ok(assoc) {
+		if in == nil || in(assoc) {
 			// Дальше файлы как у `assoc` или протоколы URL
 			progId, command := Assoc2progIdCommand(assoc)
-			do(assoc, progId, command)
+			if out == nil || out(assoc+"?"+progId+"?"+command) {
+				do(assoc, progId, command)
+			}
 		}
 	}
 }
@@ -224,4 +226,62 @@ func AntiLoop() (cleanUp func()) {
 		return func() { os.Remove(antiLoop) }
 	}
 	return
+}
+
+// https://github.com/ryanuber/go-glob
+// The character which is treated like a glob
+const GLOB = "*"
+
+// Glob will test a string pattern, potentially containing globs, against a
+// subject string. The result is a simple true/false, determining whether or
+// not the glob pattern matched the subject text.
+func Glob(pattern, subj string, toLower bool) bool {
+	if toLower {
+		pattern = strings.ToLower(pattern)
+		subj = strings.ToLower(subj)
+	}
+	// Empty pattern can only match empty subject
+	if pattern == "" {
+		return subj == pattern
+	}
+
+	// If the pattern _is_ a glob, it matches everything
+	if pattern == GLOB {
+		return true
+	}
+
+	parts := strings.Split(pattern, GLOB)
+
+	if len(parts) == 1 {
+		// No globs in pattern, so test for equality
+		return subj == pattern
+	}
+
+	leadingGlob := strings.HasPrefix(pattern, GLOB)
+	trailingGlob := strings.HasSuffix(pattern, GLOB)
+	end := len(parts) - 1
+
+	// Go over the leading parts and ensure they match.
+	for i := 0; i < end; i++ {
+		idx := strings.Index(subj, parts[i])
+
+		switch i {
+		case 0:
+			// Check the first section. Requires special handling.
+			if !leadingGlob && idx != 0 {
+				return false
+			}
+		default:
+			// Check that the middle parts match.
+			if idx < 0 {
+				return false
+			}
+		}
+
+		// Trim evaluated text from subj as we loop over the pattern.
+		subj = subj[idx+len(parts[i]):]
+	}
+
+	// Reached the last section. Requires special handling.
+	return trailingGlob || strings.HasSuffix(subj, parts[end])
 }
