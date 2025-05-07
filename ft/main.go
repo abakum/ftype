@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/abakum/ftype"
+	"github.com/ryanuber/go-glob"
 	"golang.org/x/sys/windows"
 )
 
@@ -59,21 +60,21 @@ func main() {
 			os.Stdin.Read(b)
 			return
 		}
-		if strings.Contains(assoc, ftype.GLOB) {
-			if assoc == ftype.GLOB {
+		if strings.Contains(assoc, glob.GLOB) {
+			if assoc == glob.GLOB {
 				ftype.EnumClassesRoot(apc, ftype.IsAssoc, func(subj string) bool {
-					return strings.Contains(subj, ftype.GLOB)
+					return strings.Contains(subj, glob.GLOB)
 				})
 				return
 			}
 			if strings.HasPrefix(assoc, "!") {
 				assoc = strings.TrimPrefix(assoc, "!")
 				ftype.EnumClassesRoot(apc, ftype.IsAssoc, func(subj string) bool {
-					return !ftype.Glob(assoc, subj, true)
+					return !glob.Glob(strings.ToLower(assoc), strings.ToLower(subj))
 				})
 			} else {
 				ftype.EnumClassesRoot(apc, ftype.IsAssoc, func(subj string) bool {
-					return ftype.Glob(assoc, subj, true)
+					return glob.Glob(strings.ToLower(assoc), strings.ToLower(subj))
 				})
 			}
 			return
